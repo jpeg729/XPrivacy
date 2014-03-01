@@ -7,6 +7,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
+import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,6 +25,7 @@ import javax.xml.parsers.SAXParserFactory;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.StatusLine;
+import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.conn.ConnectTimeoutException;
@@ -33,6 +35,7 @@ import org.apache.http.params.BasicHttpParams;
 import org.apache.http.params.HttpConnectionParams;
 import org.apache.http.params.HttpParams;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
@@ -89,6 +92,9 @@ public class ActivityShare extends ActivityBase {
 	private int mProgressWidth = 0;
 	private String mFileName;
 	private boolean mInteractive = false;
+	private static String[] mLicense;
+	private static String mAndroid_id;
+	private static PackageInfo mXInfo;
 
 	private static final int STATE_WAITING = 0;
 	private static final int STATE_RUNNING = 1;
@@ -1106,7 +1112,98 @@ public class ActivityShare extends ActivityBase {
 		}
 	}
 
+	private static List<PRestriction> fetchRestrictions(Context context, ApplicationInfoEx appInfo, boolean clear)
+			throws NameNotFoundException, JSONException, NoSuchAlgorithmException, ClientProtocolException,
+			IOException, AbortException, ServerException {
+		List<PRestriction> listRestriction = new ArrayList<PRestriction>();
+
+		if (mAndroid_id == null) {
+			mLicense = Util.getProLicenseUnchecked();
+			mAndroid_id = Secure.getString(context.getContentResolver(), Secure.ANDROID_ID);
+			mXInfo = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+		}
+		String confidence = PrivacyManager.getSetting(0, PrivacyManager.cSettingConfidence, "", false);
+		boolean dangerous = PrivacyManager.getSettingBool(0, PrivacyManager.cSettingDangerous, false, false);
+
+		JSONArray appName = new JSONArray();
+		for (String name : appInfo.getApplicationName())
+			appName.put(name);
+
+		JSONArray pkgName = new JSONArray();
+		for (String name : appInfo.getPackageName())
+			pkgName.put(name);
+
+		JSONArray pkgVersion = new JSONArray();
+		for (String version : appInfo.getPackageVersionName(context))
+			pkgVersion.put(version);
+
+		// Encode package
+		JSONObject jRoot = new JSONObject();
+		jRoot.put("protocol_version", cProtocolVersion);
+		jRoot.put("android_id", Util.md5(mAndroid_id).toLowerCase());
+		jRoot.put("android_sdk", Build.VERSION.SDK_INT);
+		jRoot.put("xprivacy_version", mXInfo.versionCode);
+		jRoot.put("application_name", appName);
+		jRoot.put("package_name", pkgName);
+		jRoot.put("package_version", pkgVersion);
+		jRoot.put("email", mLicense[1]);
+		jRoot.put("signature", mLicense[2]);
+		jRoot.put("confidence", confidence);
+
+		// Fetch
+		HttpParams httpParams = new BasicHttpParams();
+		HttpConnectionParams.setConnectionTimeout(httpParams, TIMEOUT_MILLISEC);
+		HttpConnectionParams.setSoTimeout(httpParams, TIMEOUT_MILLISEC);
+		HttpClient httpclient = new DefaultHttpClient(httpParams);
+
+		HttpPost httpost = new HttpPost(getBaseURL(null) + "?format=json&action=fetch");
+		httpost.setEntity(new ByteArrayEntity(jRoot.toString().getBytes("UTF-8")));
+		httpost.setHeader("Accept", "application/json");
+		httpost.setHeader("Content-type", "application/json");
+		HttpResponse response = httpclient.execute(httpost);
+		StatusLine statusLine = response.getStatusLine();
+
+		if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
+			// Succeeded
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			response.getEntity().writeTo(out);
+			out.close();
+
+			// Deserialize
+			JSONObject status = new JSONObject(out.toString("UTF-8"));
+			if (status.getBoolean("ok")) {
+				JSONArray settings = status.getJSONArray("settings");
+
+				// Set fetched restrictions
+				for (int i = 0; i < settings.length(); i++) {
+					JSONObject entry = settings.getJSONObject(i);
+					String restrictionName = entry.getString("restriction");
+					String methodName = entry.has("method") ? entry.getString("method") : null;
+					Hook hook = (methodName == null ? null : PrivacyManager.getHook(restrictionName, methodName));
+					if (dangerous || hook == null || !hook.isDangerous()) {
+						int voted_restricted = entry.getInt("restricted");
+						int voted_not_restricted = entry.getInt("not_restricted");
+						boolean restricted = (voted_restricted > voted_not_restricted);
+						if (clear || restricted)
+							listRestriction.add(new PRestriction(appInfo.getUid(), restrictionName, methodName,
+									restricted));
+					}
+				}
+			} else {
+				int errno = status.getInt("errno");
+				String message = status.getString("error");
+				throw new ServerException(context, errno, message);
+			}
+		} else {
+			// Failed
+			response.getEntity().getContent().close();
+			throw new IOException(statusLine.getReasonPhrase());
+		}
+		return listRestriction;
+	}
+
 	private class FetchTask extends AsyncTask<Boolean, Integer, Throwable> {
+
 		@Override
 		@SuppressLint("DefaultLocale")
 		protected Throwable doInBackground(Boolean... params) {
@@ -1114,12 +1211,6 @@ public class ActivityShare extends ActivityBase {
 				// Get data
 				boolean clear = params[0];
 				List<ApplicationInfoEx> lstApp = mAppAdapter.getListAppInfo();
-
-				String[] license = Util.getProLicenseUnchecked();
-				String android_id = Secure.getString(ActivityShare.this.getContentResolver(), Secure.ANDROID_ID);
-				PackageInfo xInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
-				String confidence = PrivacyManager.getSetting(0, PrivacyManager.cSettingConfidence, "", false);
-				boolean dangerous = PrivacyManager.getSettingBool(0, PrivacyManager.cSettingDangerous, false, false);
 
 				// Initialize progress
 				mProgressCurrent = 0;
@@ -1134,43 +1225,7 @@ public class ActivityShare extends ActivityBase {
 
 							setState(appInfo.getUid(), STATE_RUNNING, ActivityShare.this.getString(R.string.menu_fetch));
 
-							JSONArray appName = new JSONArray();
-							for (String name : appInfo.getApplicationName())
-								appName.put(name);
-
-							JSONArray pkgName = new JSONArray();
-							for (String name : appInfo.getPackageName())
-								pkgName.put(name);
-
-							JSONArray pkgVersion = new JSONArray();
-							for (String version : appInfo.getPackageVersionName(ActivityShare.this))
-								pkgVersion.put(version);
-
-							// Encode package
-							JSONObject jRoot = new JSONObject();
-							jRoot.put("protocol_version", cProtocolVersion);
-							jRoot.put("android_id", Util.md5(android_id).toLowerCase());
-							jRoot.put("android_sdk", Build.VERSION.SDK_INT);
-							jRoot.put("xprivacy_version", xInfo.versionCode);
-							jRoot.put("application_name", appName);
-							jRoot.put("package_name", pkgName);
-							jRoot.put("package_version", pkgVersion);
-							jRoot.put("email", license[1]);
-							jRoot.put("signature", license[2]);
-							jRoot.put("confidence", confidence);
-
-							// Fetch
-							HttpParams httpParams = new BasicHttpParams();
-							HttpConnectionParams.setConnectionTimeout(httpParams, TIMEOUT_MILLISEC);
-							HttpConnectionParams.setSoTimeout(httpParams, TIMEOUT_MILLISEC);
-							HttpClient httpclient = new DefaultHttpClient(httpParams);
-
-							HttpPost httpost = new HttpPost(getBaseURL(null) + "?format=json&action=fetch");
-							httpost.setEntity(new ByteArrayEntity(jRoot.toString().getBytes("UTF-8")));
-							httpost.setHeader("Accept", "application/json");
-							httpost.setHeader("Content-type", "application/json");
-							HttpResponse response = httpclient.execute(httpost);
-							StatusLine statusLine = response.getStatusLine();
+							List<PRestriction> listRestriction = fetchRestrictions(ActivityShare.this, appInfo, clear);
 
 							if (mAbort)
 								throw new AbortException(ActivityShare.this);
@@ -1178,63 +1233,29 @@ public class ActivityShare extends ActivityBase {
 							setState(appInfo.getUid(), STATE_RUNNING,
 									ActivityShare.this.getString(R.string.msg_applying));
 
-							if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
-								// Succeeded
-								ByteArrayOutputStream out = new ByteArrayOutputStream();
-								response.getEntity().writeTo(out);
-								out.close();
+							if (listRestriction != null) {
+								// Delete existing restrictions
+								List<Boolean> oldState = PrivacyManager.getRestartStates(appInfo.getUid(), null);
 
-								// Deserialize
-								JSONObject status = new JSONObject(out.toString("UTF-8"));
-								if (status.getBoolean("ok")) {
-									JSONArray settings = status.getJSONArray("settings");
-									// Delete existing restrictions
-									List<Boolean> oldState = PrivacyManager.getRestartStates(appInfo.getUid(), null);
+								// Clear existing restriction
+								if (clear)
+									PrivacyManager.deleteRestrictions(appInfo.getUid(), null, true);
 
-									// Clear existing restriction
-									if (clear)
-										PrivacyManager.deleteRestrictions(appInfo.getUid(), null, true);
+								// Set fetched restrictions
+								PrivacyManager.setRestrictionList(listRestriction);
 
-									// Set fetched restrictions
-									List<PRestriction> listRestriction = new ArrayList<PRestriction>();
-									for (int i = 0; i < settings.length(); i++) {
-										JSONObject entry = settings.getJSONObject(i);
-										String restrictionName = entry.getString("restriction");
-										String methodName = entry.has("method") ? entry.getString("method") : null;
-										Hook hook = (methodName == null ? null : PrivacyManager.getHook(
-												restrictionName, methodName));
-										if (dangerous || hook == null || !hook.isDangerous()) {
-											int voted_restricted = entry.getInt("restricted");
-											int voted_not_restricted = entry.getInt("not_restricted");
-											boolean restricted = (voted_restricted > voted_not_restricted);
-											if (clear || restricted)
-												listRestriction.add(new PRestriction(appInfo.getUid(), restrictionName,
-														methodName, restricted));
-										}
-									}
-									PrivacyManager.setRestrictionList(listRestriction);
-									List<Boolean> newState = PrivacyManager.getRestartStates(appInfo.getUid(), null);
+								List<Boolean> newState = PrivacyManager.getRestartStates(appInfo.getUid(), null);
 
-									// Mark as new/changed
-									PrivacyManager.setSetting(appInfo.getUid(), PrivacyManager.cSettingState,
-											Integer.toString(ActivityMain.STATE_ATTENTION));
+								// Mark as new/changed
+								PrivacyManager.setSetting(appInfo.getUid(), PrivacyManager.cSettingState,
+										Integer.toString(ActivityMain.STATE_ATTENTION));
 
-									// Change app modification time
-									PrivacyManager.setSetting(appInfo.getUid(), PrivacyManager.cSettingModifyTime,
-											Long.toString(System.currentTimeMillis()));
+								// Change app modification time
+								PrivacyManager.setSetting(appInfo.getUid(), PrivacyManager.cSettingModifyTime,
+										Long.toString(System.currentTimeMillis()));
 
-									setState(appInfo.getUid(), STATE_SUCCESS,
-											!newState.equals(oldState) ? getString(R.string.msg_restart) : null);
-								} else {
-									int errno = status.getInt("errno");
-									String message = status.getString("error");
-									ServerException ex = new ServerException(ActivityShare.this, errno, message);
-									setState(appInfo.getUid(), STATE_FAILURE, ex.getMessage());
-								}
-							} else {
-								// Failed
-								response.getEntity().getContent().close();
-								throw new IOException(statusLine.getReasonPhrase());
+								setState(appInfo.getUid(), STATE_SUCCESS,
+										!newState.equals(oldState) ? getString(R.string.msg_restart) : null);
 							}
 						}
 					} catch (Throwable ex) {
