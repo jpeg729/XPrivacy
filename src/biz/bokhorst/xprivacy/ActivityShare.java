@@ -1112,7 +1112,7 @@ public class ActivityShare extends ActivityBase {
 		}
 	}
 
-	private static List<PRestriction> fetchRestrictions(Context context, ApplicationInfoEx appInfo, boolean clear)
+	public static List<PRestriction> fetchRestrictions(Context context, ApplicationInfoEx appInfo, boolean clear)
 			throws NameNotFoundException, JSONException, NoSuchAlgorithmException, ClientProtocolException,
 			IOException, AbortException, ServerException {
 		List<PRestriction> listRestriction = new ArrayList<PRestriction>();

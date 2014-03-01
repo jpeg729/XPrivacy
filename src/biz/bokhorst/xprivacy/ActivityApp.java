@@ -38,6 +38,7 @@ import android.text.Html;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.text.method.LinkMovementMethod;
+import android.util.Log;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.View.OnClickListener;
@@ -72,6 +73,8 @@ import android.widget.Toast;
 public class ActivityApp extends ActivityBase {
 	private ApplicationInfoEx mAppInfo = null;
 	private RestrictionAdapter mPrivacyListAdapter = null;
+	private HashMap<String, List<String>> mFetched;
+	private boolean mShowFetched = false;
 
 	public static final String cUid = "Uid";
 	public static final String cRestrictionName = "RestrictionName";
@@ -579,11 +582,8 @@ public class ActivityApp extends ActivityBase {
 	}
 
 	private void optionFetch() {
-		int[] uid = new int[] { mAppInfo.getUid() };
-		Intent intent = new Intent("biz.bokhorst.xprivacy.action.FETCH");
-		intent.putExtra(ActivityShare.cUidList, uid);
-		intent.putExtra(ActivityShare.cInteractive, true);
-		startActivity(intent);
+		FetchTask fetchTask = new FetchTask();
+		fetchTask.executeOnExecutor(mExecutor, (Object) null);
 	}
 
 	private void optionAccounts() {
@@ -662,6 +662,85 @@ public class ActivityApp extends ActivityBase {
 	}
 
 	// Tasks
+
+	private class FetchTask extends AsyncTask<Object, Object, Boolean> {
+		List<PRestriction> mListFetched;
+		String mErrorMessage;
+
+		@Override
+		protected Boolean doInBackground(Object... arg0) {
+			try {
+				mListFetched = ActivityShare.fetchRestrictions(ActivityApp.this, mAppInfo, true);
+				// Parse list
+				mFetched = new HashMap<String, List<String>>();
+				for (PRestriction restriction : mListFetched) {
+					if (restriction.restricted) {
+						String restrictionName = restriction.restrictionName;
+						String methodName = restriction.methodName;
+						if (!mFetched.containsKey(restrictionName))
+							mFetched.put(restrictionName, new ArrayList<String>());
+						if (methodName != null)
+							mFetched.get(restrictionName).add(methodName);
+						Util.log(null, Log.WARN, "Fetched " + restrictionName + "/" + methodName);
+					}
+				}
+				return true;
+			} catch (Throwable ex) {
+				Util.bug(null, ex);
+				mErrorMessage = ex.getMessage();
+				return false;
+			}
+		}
+
+		@Override
+		protected void onPostExecute(Boolean success) {
+			if (success) {
+				// show fetch checks
+				mShowFetched = true;
+				mPrivacyListAdapter.notifyDataSetChanged();
+
+				// show ok/cancel buttons
+				final View llButtons = findViewById(R.id.llButtons);
+				llButtons.setVisibility(View.VISIBLE);
+				Button btnOk = (Button) findViewById(R.id.btnOk);
+				Button btnCancel = (Button) findViewById(R.id.btnCancel);
+
+				btnOk.setOnClickListener(new OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						// Apply fetched
+						List<Boolean> oldState = PrivacyManager.getRestartStates(mAppInfo.getUid(), null);
+
+						// Clear existing restriction
+						PrivacyManager.deleteRestrictions(mAppInfo.getUid(), null, true);
+
+						// Set fetched restrictions
+						PrivacyManager.setRestrictionList(mListFetched);
+
+						List<Boolean> newState = PrivacyManager.getRestartStates(mAppInfo.getUid(), null);
+
+						if (!newState.equals(oldState))
+							Toast.makeText(ActivityApp.this, R.string.msg_restart, Toast.LENGTH_SHORT).show();
+
+						// Hide buttons
+						llButtons.setVisibility(View.GONE);
+					}
+				});
+
+				btnCancel.setOnClickListener(new OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						// Just hide everything
+						mShowFetched = false;
+						mPrivacyListAdapter.notifyDataSetChanged();
+						llButtons.setVisibility(View.GONE);
+					}
+				});
+			} else {
+				Toast.makeText(ActivityApp.this, mErrorMessage, Toast.LENGTH_LONG).show();
+			}
+		}
+	}
 
 	private class AccountsTask extends AsyncTask<Object, Object, Object> {
 		private List<CharSequence> mListAccount;
@@ -1072,6 +1151,7 @@ public class ActivityApp extends ActivityBase {
 			public ImageView imgGranted;
 			public ImageView imgInfo;
 			public TextView tvName;
+			public ImageView imgCbFetched;
 			public ImageView imgCbRestricted;
 			public ImageView imgCbAsk;
 			public LinearLayout llName;
@@ -1084,6 +1164,7 @@ public class ActivityApp extends ActivityBase {
 				imgGranted = (ImageView) row.findViewById(R.id.imgGranted);
 				imgInfo = (ImageView) row.findViewById(R.id.imgInfo);
 				tvName = (TextView) row.findViewById(R.id.tvName);
+				imgCbFetched = (ImageView) row.findViewById(R.id.imgCbFetched);
 				imgCbRestricted = (ImageView) row.findViewById(R.id.imgCbRestricted);
 				imgCbAsk = (ImageView) row.findViewById(R.id.imgCbAsk);
 				llName = (LinearLayout) row.findViewById(R.id.llName);
@@ -1130,6 +1211,12 @@ public class ActivityApp extends ActivityBase {
 					holder.tvName.setTypeface(null, used ? Typeface.BOLD_ITALIC : Typeface.NORMAL);
 					holder.imgUsed.setVisibility(used ? View.VISIBLE : View.INVISIBLE);
 					holder.imgGranted.setVisibility(permission ? View.VISIBLE : View.INVISIBLE);
+
+					// Show fetched restriction
+					if (mShowFetched && mFetched.containsKey(restrictionName)) {
+						holder.imgCbFetched.setImageBitmap(getFullCheckNoBox());
+						holder.imgCbFetched.setVisibility(View.VISIBLE);
+					}
 
 					// Display restriction
 					holder.imgCbRestricted.setImageBitmap(getCheckBoxImage(rstate));
@@ -1197,6 +1284,9 @@ public class ActivityApp extends ActivityBase {
 				holder.imgIndicator.setVisibility(View.INVISIBLE);
 			else
 				holder.imgIndicator.setVisibility(View.VISIBLE);
+
+			// Hide fetched
+			holder.imgCbFetched.setVisibility(View.GONE);
 
 			// Display if used
 			holder.tvName.setTypeface(null, Typeface.NORMAL);
@@ -1276,6 +1366,7 @@ public class ActivityApp extends ActivityBase {
 			public ImageView imgGranted;
 			public ImageView imgInfo;
 			public TextView tvMethodName;
+			public ImageView imgCbFetched;
 			public ImageView imgCbMethodRestricted;
 			public ImageView imgCbMethodAsk;
 			public LinearLayout llMethodName;
@@ -1288,6 +1379,7 @@ public class ActivityApp extends ActivityBase {
 				imgGranted = (ImageView) row.findViewById(R.id.imgGranted);
 				imgInfo = (ImageView) row.findViewById(R.id.imgInfo);
 				tvMethodName = (TextView) row.findViewById(R.id.tvMethodName);
+				imgCbFetched = (ImageView) row.findViewById(R.id.imgCbFetched);
 				imgCbMethodRestricted = (ImageView) row.findViewById(R.id.imgCbMethodRestricted);
 				imgCbMethodAsk = (ImageView) row.findViewById(R.id.imgCbMethodAsk);
 				llMethodName = (LinearLayout) row.findViewById(R.id.llMethodName);
@@ -1351,6 +1443,12 @@ public class ActivityApp extends ActivityBase {
 					holder.imgUsed.setVisibility(lastUsage == 0 && md.hasUsageData() ? View.INVISIBLE : View.VISIBLE);
 					holder.tvMethodName.setTypeface(null, lastUsage == 0 ? Typeface.NORMAL : Typeface.BOLD_ITALIC);
 					holder.imgGranted.setVisibility(permission ? View.VISIBLE : View.INVISIBLE);
+
+					// Show fetched restriction
+					if (mShowFetched && mFetched.get(restrictionName).contains(md.getName())) {
+						holder.imgCbFetched.setImageBitmap(getFullCheckNoBox());
+						holder.imgCbFetched.setVisibility(View.VISIBLE);
+					}
 
 					// Display restriction
 					holder.imgCbMethodRestricted.setImageBitmap(getCheckBoxImage(rstate));
@@ -1436,6 +1534,9 @@ public class ActivityApp extends ActivityBase {
 			holder.llMethodName.setEnabled(false);
 			holder.tvMethodName.setEnabled(false);
 			holder.imgCbMethodAsk.setEnabled(false);
+
+			// Hide fetched
+			holder.imgCbFetched.setVisibility(View.GONE);
 
 			// Display method name
 			holder.tvMethodName.setText(md.getName());

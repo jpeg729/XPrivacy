@@ -90,8 +90,14 @@ public class ActivityBase extends Activity {
 		return checkbox;
 	}
 
+	protected Bitmap getFullCheckNoBox() {
+		if (mCheck == null)
+			buildCheckBoxes();
+		return mCheck[4];
+	}
+
 	private void buildCheckBoxes() {
-		mCheck = new Bitmap[4];
+		mCheck = new Bitmap[5];
 
 		// Get highlight color
 		TypedArray ta1 = getTheme().obtainStyledAttributes(new int[] { android.R.attr.colorActivatedHighlight });
@@ -152,6 +158,14 @@ public class ActivityBase extends Activity {
 		off.draw(canvas3);
 		questionmark.draw(canvas3);
 		questionmarkOutline.draw(canvas3);
+
+		// Create full check without box
+		mCheck[4] = Bitmap.createBitmap(off.getIntrinsicWidth(), off.getIntrinsicHeight(), Config.ARGB_8888);
+		Canvas canvas4 = new Canvas(mCheck[4]);
+		checkmark.setAlpha(170);
+		checkmark.draw(canvas4);
+		checkmarkOutline.setAlpha(170);
+		checkmarkOutline.draw(canvas4);
 	}
 
 	public int getThemed(int attr) {

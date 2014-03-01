@@ -208,7 +208,8 @@
 
     <RelativeLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content" >
+        android:layout_height="0dip"
+        android:layout_weight="1" >
 
         <ExpandableListView
             android:id="@+id/elvRestriction"
@@ -253,5 +254,32 @@
             </RelativeLayout>
         </ScrollView>
     </RelativeLayout>
+
+    <LinearLayout
+        android:id="@+id/llButtons"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginRight="@dimen/activity_horizontal_margin"
+        android:orientation="horizontal"
+        android:visibility="gone" >
+
+        <Button
+            android:id="@+id/btnCancel"
+            android:layout_width="0dip"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_weight="1"
+            android:text="@android:string/cancel"
+            tools:ignore="ButtonStyle" />
+
+        <Button
+            android:id="@+id/btnOk"
+            android:layout_width="0dip"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_weight="1"
+            android:text="@android:string/ok"
+            tools:ignore="ButtonStyle" />
+    </LinearLayout>
 
 </LinearLayout>
