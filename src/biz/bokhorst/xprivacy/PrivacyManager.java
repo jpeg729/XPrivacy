@@ -446,7 +446,7 @@ public class PrivacyManager {
 					Boolean.toString(!ondemand) + "+ask", false);
 			boolean restrict = templateValue.contains("true");
 			boolean asked = templateValue.contains("asked");
-			PrivacyManager.setRestriction(uid, rRestrictionName, null, restrict, asked || !ondemand);
+			PrivacyManager.setRestriction(uid, rRestrictionName, null, restrict, asked);
 		}
 	}
 

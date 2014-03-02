@@ -262,8 +262,9 @@ public class ActivityShare extends ActivityBase {
 			});
 
 			boolean dangerous = PrivacyManager.getSettingBool(0, PrivacyManager.cSettingDangerous, false, false);
-			rbODEnable.setEnabled(dangerous);
-			rbODDisable.setEnabled(dangerous);
+			boolean ondemand = PrivacyManager.getSettingBool(0, PrivacyManager.cSettingOnDemand, true, false);
+			rbODEnable.setEnabled(dangerous && ondemand);
+			rbODDisable.setEnabled(dangerous && ondemand);
 
 		} else
 			tvDescription.setText(getBaseURL(ActivityShare.this));
@@ -618,12 +619,72 @@ public class ActivityShare extends ActivityBase {
 						PrivacyManager.applyTemplate(uid, restrictionName);
 
 					else if (actionId == R.id.rbEnableOndemand) {
-						PrivacyManager.setSetting(uid, PrivacyManager.cSettingOnDemand, Boolean.toString(true));
-						PrivacyManager.setSetting(uid, PrivacyManager.cSettingNotify, Boolean.toString(false));
+						if (restrictionName == null) {
+							PrivacyManager.setSetting(uid, PrivacyManager.cSettingOnDemand, Boolean.toString(true));
+							PrivacyManager.setSetting(uid, PrivacyManager.cSettingNotify, Boolean.toString(false));
+						} else if (!PrivacyManager.getSettingBool(-uid, PrivacyManager.cSettingOnDemand, false, false)) {
+							// Enable on-demand for this app
+							PrivacyManager.setSetting(uid, PrivacyManager.cSettingOnDemand, Boolean.toString(true));
+
+							// Enable it only for this category
+							for (String restriction : PrivacyManager.getRestrictions()) {
+								PRestriction query = PrivacyManager.getRestrictionEx(uid, restrictionName, null);
+								if (restriction.equals(restrictionName))
+									query.asked = false;
+								else
+									query.asked = true;
+
+								PrivacyManager
+										.setRestriction(uid, restrictionName, null, query.restricted, query.asked);
+							}
+						} else {
+							// Simply enable ondemand for the selected category
+							PRestriction query = PrivacyManager.getRestrictionEx(uid, restrictionName, null);
+							PrivacyManager.setRestriction(uid, restrictionName, null, query.restricted, false);
+						}
 
 					} else if (actionId == R.id.rbDisableOndemand) {
-						PrivacyManager.setSetting(uid, PrivacyManager.cSettingOnDemand, Boolean.toString(false));
-						PrivacyManager.setSetting(uid, PrivacyManager.cSettingNotify, Boolean.toString(true));
+						if (restrictionName == null) {
+							PrivacyManager.setSetting(uid, PrivacyManager.cSettingOnDemand, Boolean.toString(false));
+							PrivacyManager.setSetting(uid, PrivacyManager.cSettingNotify, Boolean.toString(true));
+
+							// Preserve privacy
+							// NB I chose to keep current method+category asked
+							// states so that the user can undo this choice just
+							// by re-enabling on-demand for the app
+							List<PRestriction> listPRestriction = new ArrayList<PRestriction>();
+							for (PRestriction categoryR : PrivacyService.getClient().getRestrictionList(
+									new PRestriction(uid, null, null)))
+								if (!categoryR.asked) {
+									// Make sure each category not marked asked
+									// will be restricted
+									if (categoryR.restricted != true)
+										listPRestriction.add(new PRestriction(uid, categoryR.restrictionName, null,
+												true, categoryR.asked));
+
+									// Check the methods too
+									for (PRestriction methodR : PrivacyService.getClient().getRestrictionList(
+											new PRestriction(uid, categoryR.restrictionName, null)))
+										if (!methodR.asked)
+											listPRestriction.add(new PRestriction(uid, methodR.restrictionName,
+													methodR.methodName, true, methodR.asked));
+								}
+							PrivacyManager.setRestrictionList(listPRestriction);
+
+						} else if (PrivacyManager.getSettingBool(-uid, PrivacyManager.cSettingOnDemand, false, false)) {
+							// Disable it only for the selected category
+							PRestriction query = PrivacyManager.getRestrictionEx(uid, restrictionName, null);
+							List<PRestriction> listPRestriction = new ArrayList<PRestriction>();
+							listPRestriction.add(new PRestriction(uid, restrictionName, null, query.restricted, true));
+
+							// Preserve privacy
+							for (PRestriction methodR : PrivacyService.getClient().getRestrictionList(
+									new PRestriction(uid, restrictionName, null)))
+								if (!methodR.asked)
+									listPRestriction.add(new PRestriction(uid, methodR.restrictionName,
+											methodR.methodName, true, methodR.asked));
+							PrivacyManager.setRestrictionList(listPRestriction);
+						}
 
 					} else
 						Util.log(null, Log.ERROR, "Unknown action=" + actionId);
