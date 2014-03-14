@@ -238,9 +238,8 @@ public class ActivityApp extends ActivityBase {
 		lvRestriction.setGroupIndicator(null);
 		mPrivacyListAdapter = new RestrictionAdapter(R.layout.restrictionentry, mAppInfo, restrictionName, methodName);
 		lvRestriction.setAdapter(mPrivacyListAdapter);
-		if (restrictionName != null) {
-			int groupPosition = new ArrayList<String>(PrivacyManager.getRestrictions(this).values())
-					.indexOf(restrictionName);
+		if (restrictionName != null) { // TODO
+			int groupPosition = mPrivacyListAdapter.mListRestriction.indexOf(restrictionName);
 			lvRestriction.expandGroup(groupPosition);
 			lvRestriction.setSelectedGroup(groupPosition);
 			if (methodName != null) {
@@ -978,7 +977,7 @@ public class ActivityApp extends ActivityBase {
 		private ApplicationInfoEx mAppInfo;
 		private String mSelectedRestrictionName;
 		private String mSelectedMethodName;
-		private List<String> mListRestriction;
+		public List<String> mListRestriction;
 		private HashMap<Integer, List<Hook>> mHook;
 		private LayoutInflater mInflater = (LayoutInflater) getSystemService(Context.LAYOUT_INFLATER_SERVICE);
 
@@ -994,10 +993,13 @@ public class ActivityApp extends ActivityBase {
 			boolean fPermission = PrivacyManager.getSettingBool(0, PrivacyManager.cSettingFPermission, false, false);
 
 			for (String rRestrictionName : PrivacyManager.getRestrictions(ActivityApp.this).values()) {
-				boolean isUsed = (PrivacyManager.getUsage(mAppInfo.getUid(), rRestrictionName, null) > 0);
-				boolean hasPermission = PrivacyManager.hasPermission(ActivityApp.this, mAppInfo, rRestrictionName);
-				if (mSelectedRestrictionName != null
-						|| ((fUsed ? isUsed : true) && (fPermission ? isUsed || hasPermission : true)))
+				boolean isUsed = true;
+				if (fUsed || fPermission)
+					isUsed = (PrivacyManager.getUsage(mAppInfo.getUid(), rRestrictionName, null) > 0);
+				boolean hasPermission = true;
+				if (fPermission)
+					hasPermission = PrivacyManager.hasPermission(ActivityApp.this, mAppInfo, rRestrictionName);
+				if ((fUsed ? isUsed : true) && (fPermission ? isUsed || hasPermission : true))
 					mListRestriction.add(rRestrictionName);
 			}
 		}
