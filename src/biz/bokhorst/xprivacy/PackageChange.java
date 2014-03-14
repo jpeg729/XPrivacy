@@ -53,6 +53,13 @@ public class PackageChange extends BroadcastReceiver {
 						}
 					}
 
+					// Clear permissions cache
+					synchronized (PrivacyManager.mPermissionRestrictionCache) {
+						if (replacing && PrivacyManager.mPermissionRestrictionCache.get(uid) != null) {
+							PrivacyManager.mPermissionRestrictionCache.remove(uid);
+						}
+					}
+
 					// Mark as new/changed
 					PrivacyManager.setSetting(uid, PrivacyManager.cSettingState,
 							Integer.toString(ActivityMain.STATE_ATTENTION));
